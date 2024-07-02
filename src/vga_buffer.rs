@@ -1,11 +1,15 @@
 // Code for the VGA text buffer
-/**
- * VGA text buffer
- * 0-7: ASCII code point
- * 8-11: foreground color
- * 12-14: background color
- * 15: blink
- */
+use core::fmt;
+use lazy_static::lazy_static;
+use volatile::Volatile;
+
+// Implement the fmt::Write trait for supporting Rust's formatting macros
+impl fmt::Write for Writer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.write_string(s);
+        Ok(())
+    }
+}
 
 // colors using an enum
 #[allow(dead_code)] // disable the warning for unused code
@@ -42,6 +46,13 @@ impl ColorCode {
 }
 
 // a screen character
+/**
+ * VGA text buffer
+ * 0-7: ASCII code point
+ * 8-11: foreground color
+ * 12-14: background color
+ * 15: blink
+ */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)] // the struct should have a C-like layout
 struct ScreenChar {
@@ -54,7 +65,7 @@ const BUFFER_WIDTH: usize = 80;
 
 #[repr(transparent)]
 struct Buffer {
-    chars: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
 // A writer for actually writing to the VGA buffer
@@ -73,30 +84,43 @@ impl Writer {
                     self.new_line();
                 }
 
-                // let row = BUFFER_HEIGHT - 1; // just write in the bottom line
-                let row = 0; // just write in the top line
+                let row = BUFFER_HEIGHT - 1; // just write in the bottom line
                 let col = self.column_position;
 
                 let color_code = self.color_code;
-                self.buffer.chars[row][col] = ScreenChar {
+                // Abandoned the following code because of Volatile type
+                // self.buffer.chars[row][col] = ScreenChar {
+                //     ascii_character: byte,
+                //     color_code,
+                // };
+                self.buffer.chars[row][col].write(ScreenChar {
                     ascii_character: byte,
                     color_code,
-                };
+                });
                 self.column_position += 1;
             }
         }
     }
 
     pub fn new_line(&mut self) {
-        // // move all characters one row up
-        // for row in 1..BUFFER_HEIGHT {
-        //     for col in 0..BUFFER_WIDTH {
-        //         let character = self.buffer.chars[row][col];
-        //         self.buffer.chars[row - 1][col] = character;
-        //     }
-        // }
-        // self.clear_row(BUFFER_HEIGHT - 1);
-        // self.column_position = 0;
+        // move all characters one row up
+        for row in 1..BUFFER_HEIGHT {
+            for col in 0..BUFFER_WIDTH {
+                self.buffer.chars[row - 1][col].write(self.buffer.chars[row][col].read());
+            }
+        }
+        self.clear_row(BUFFER_HEIGHT - 1);
+        self.column_position = 0;
+    }
+
+    pub fn clear_row(&mut self, row: usize) {
+        let blank = ScreenChar {
+            ascii_character: b' ',
+            color_code: self.color_code,
+        };
+        for col in 0..BUFFER_WIDTH {
+            self.buffer.chars[row][col].write(blank);
+        }
     }
 
     pub fn write_string(&mut self, s: &str) {
@@ -110,11 +134,22 @@ impl Writer {
 }
 
 pub fn print_something() {
+    use core::fmt::Write;
     let mut writer = Writer {
         column_position: 0,
         color_code: ColorCode::new(Color::Yellow, Color::Black),
         buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
     };
 
-    writer.write_string("Hello, Wörld!"); // Hello, W■■rld!
+    writer.write_string("Hello, Wörld!\n"); // Hello, W■■rld!
+    write!(writer, "The numbers are {} and {}", 42, 1.0 / 3.0).unwrap();
+}
+
+// the global writer instance
+lazy_static! {
+    pub static ref WRITER: Writer = Writer {
+        column_position: 0,
+        color_code: ColorCode::new(Color::Yellow, Color::Black),
+        buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
+    };
 }

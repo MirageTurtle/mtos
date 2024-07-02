@@ -6,4 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bootloader = "0.9"
+bootloader = "0.9" # for bootloader
+volatile = "0.2.6" # for VGA buffer
+
+# for lazy_static (specifically, for vga global interface)
+[dependencies.lazy_static]
+version = "1.0"
+features = ["spin_no_std"] # we don't link to std library
